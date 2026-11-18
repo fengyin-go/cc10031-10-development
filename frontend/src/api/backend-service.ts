@@ -1,6 +1,14 @@
 import { request } from './client'
 import { moduleMeta } from '@/data/modules'
-import type { ActionResult, EntryRow, OverviewResult, PageResult } from '@/data/types'
+import type {
+  ActionResult,
+  EntryRow,
+  LedgerDataset,
+  LedgerRecord,
+  OverviewResult,
+  PageResult,
+  ReconcileReport,
+} from '@/data/types'
 
 export { moduleMeta }
 
@@ -105,4 +113,84 @@ export async function loadRecoveryStats(): Promise<Record<string, unknown>> {
   const response = await request('/api/recovery')
   if (!response.ok) throw new Error('恢复状态查询失败')
   return await response.json()
+}
+
+/* ------------------------------------------------------------------ */
+/* 定位策略执行台账（处理项癸）                                          */
+/* ------------------------------------------------------------------ */
+
+/** 构建定位策略执行记录数据集；重复导入只认第一条记录 */
+export async function buildLedgerDataset(ruleIds: number[]): Promise<LedgerDataset> {
+  const response = await request('/api/locator-ledger/build', {
+    method: 'POST',
+    body: JSON.stringify({ rule_ids: ruleIds.length ? ruleIds : null }),
+  })
+  if (!response.ok) throw new Error('台账数据集构建失败')
+  const payload = await response.json()
+  return payload.dataset as LedgerDataset
+}
+
+/** 台账数据集版本列表 */
+export async function loadLedgerDatasets(): Promise<{
+  count: number
+  datasets: LedgerDataset[]
+  latest_version: string | null
+}> {
+  const response = await request('/api/locator-ledger/datasets')
+  if (!response.ok) throw new Error('台账版本读取失败')
+  return await response.json()
+}
+
+/** 台账记录：每条失败记录都能看到最终采用的选择器和回退路径 */
+export async function loadLedgerRecords(
+  version?: string,
+  status?: string,
+): Promise<{ count: number; records: LedgerRecord[] }> {
+  const query = new URLSearchParams()
+  if (version) query.set('version', version)
+  if (status) query.set('status', status)
+  const response = await request(`/api/locator-ledger/records?${query}`)
+  if (!response.ok) throw new Error('台账记录读取失败')
+  return await response.json()
+}
+
+/** 运行时会话按版本数据集批量执行，为每个元素生成回执 */
+export async function executeLedgerDataset(version?: string): Promise<{
+  version?: string
+  session_id: string | null
+  executed: number
+  failed: number
+  total?: number
+  receipts: { receipt_id: string }[]
+  message?: string
+}> {
+  const response = await request('/api/locator-ledger/execute', {
+    method: 'POST',
+    body: JSON.stringify({ version: version ?? null }),
+  })
+  if (!response.ok) throw new Error('批量执行失败')
+  const payload = await response.json()
+  return payload.result
+}
+
+/** 异常元素重新测试，生成新的执行回执 */
+export async function retestLedgerRecords(recordIds: string[]): Promise<{
+  retested: number
+  results: { record_id: string; ok: boolean; receipt_id?: string; message?: string }[]
+}> {
+  const response = await request('/api/locator-ledger/retest', {
+    method: 'POST',
+    body: JSON.stringify({ record_ids: recordIds }),
+  })
+  if (!response.ok) throw new Error('重新测试失败')
+  const payload = await response.json()
+  return payload.result
+}
+
+/** 核对台账记录与回执明细：残留 / 丢失 / 错位 / 重复 */
+export async function loadLedgerReconcile(): Promise<ReconcileReport> {
+  const response = await request('/api/locator-ledger/reconcile')
+  if (!response.ok) throw new Error('核对结果读取失败')
+  const payload = await response.json()
+  return payload.reconcile as ReconcileReport
 }

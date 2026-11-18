@@ -10,8 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
+from app.schemas import (
+    LedgerBuildPayload,
+    LedgerExecutePayload,
+    LedgerRetestPayload,
+)
 from app.store import store
-from app.services import runtime_session, callback_hook
+from app.services import runtime_session, callback_hook, locator_ledger
 
 app = FastAPI(title="RPA流程自动化中心", version="1.0.0")
 
@@ -59,6 +64,7 @@ def nodestats(module: str | None = Query(default=None)) -> dict[str, object]:
     # 附加非模块服务
     snapshots["runtime_session"] = runtime_session.domain_snapshot()
     snapshots["callback_hook"] = callback_hook.domain_snapshot()
+    snapshots["locator_ledger"] = locator_ledger.domain_snapshot()
 
     # 存储基础设施概览
     infra = {
@@ -226,6 +232,71 @@ def pipeline_element_execution() -> dict[str, object]:
     """触发元素定位与自动化执行流程。"""
     result = runtime_session.consume_strategies_and_execute()
     return {"ok": True, "result": result}
+
+
+# ---- 定位策略执行台账（处理项癸）----
+# 固定路径必须注册在 /api/{module} 动态路由之前。
+
+@app.post("/api/locator-ledger/build")
+def locator_ledger_build(payload: LedgerBuildPayload) -> dict[str, object]:
+    """构建定位策略执行记录数据集（新版本）。
+
+    读取已启用定位规则和新到达的运行时会话记录，解析主/回退执行结果；
+    重复导入只认第一条记录。
+    """
+    dataset = locator_ledger.build_dataset(rule_ids=payload.rule_ids)
+    return {"ok": True, "dataset": dataset}
+
+
+@app.get("/api/locator-ledger/datasets")
+def locator_ledger_datasets() -> dict[str, object]:
+    """定位策略执行记录数据集的版本列表。"""
+    datasets = locator_ledger.list_datasets()
+    return {"count": len(datasets), "datasets": datasets,
+            "latest_version": locator_ledger.latest_version()}
+
+
+@app.get("/api/locator-ledger/records")
+def locator_ledger_records(
+    version: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+) -> dict[str, object]:
+    """查询台账记录：每条失败记录都能看到最终采用的选择器和回退路径。"""
+    records = locator_ledger.list_records(version=version, status=status)
+    return {"count": len(records), "records": records}
+
+
+@app.get("/api/locator-ledger/receipts")
+def locator_ledger_receipts(
+    record_id: str | None = Query(default=None),
+    active_only: bool = Query(default=False),
+) -> dict[str, object]:
+    """查询执行回执（每个元素一条，重测后旧回执标记失效）。"""
+    receipts = locator_ledger.list_receipts(
+        record_id=record_id, active_only=active_only)
+    return {"count": len(receipts), "receipts": receipts}
+
+
+@app.post("/api/locator-ledger/execute")
+def locator_ledger_execute(payload: LedgerExecutePayload) -> dict[str, object]:
+    """运行时会话消费台账数据集：按最终选择器批量执行，逐元素生成回执。"""
+    result = runtime_session.consume_ledger_and_execute(version=payload.version)
+    return {"ok": True, "result": result}
+
+
+@app.post("/api/locator-ledger/retest")
+def locator_ledger_retest(payload: LedgerRetestPayload) -> dict[str, object]:
+    """异常元素重新测试，生成新的执行回执（旧回执自动失效）。"""
+    if not payload.record_ids:
+        return {"ok": False, "message": "请先选择要重测的台账记录"}
+    result = locator_ledger.retest_records(payload.record_ids)
+    return {"ok": True, "result": result}
+
+
+@app.get("/api/locator-ledger/reconcile")
+def locator_ledger_reconcile() -> dict[str, object]:
+    """核对台账记录与回执明细：残留 / 丢失 / 错位 / 重复。"""
+    return {"ok": True, "reconcile": locator_ledger.reconcile()}
 
 
 # 资源路由含 /api/{module}，必须放在 health / overview 之后注册，

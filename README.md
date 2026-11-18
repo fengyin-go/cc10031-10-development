@@ -11,12 +11,15 @@
 .
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端
 │   ├── src/views/WorkbenchView.vue|tsx  全部模块共享工作台
+│   ├── src/views/LocatorLedgerView.vue  定位策略执行台账工作台
 │   ├── src/data/modules.ts              18个业务模块配置
 │   ├── src/api/              统一请求封装
 │   └── vite.config.ts        dev server 配置（open: false）
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
+│   ├── app/services/locator_ledger.py   定位策略执行台账（版本化数据集+回执+核对）
+│   ├── app/services/runtime_session.py  运行时会话（消费台账、批量执行、生成回执）
 │   ├── app/services/base.py     共享服务骨架
 │   └── app/store.py          内存数据仓库与示例数据
 ├── .gitignore
@@ -70,6 +73,24 @@ npm run dev
 | 调度计划 | `scheduler` | 采集计划 | 计划名称、绑定流程、cron表达式 |
 | 运行概览 | `report_dashboard` | 运行数据 | 统计日期、总执行数、成功数 |
 | 任务队列 | `task_queue` | 排队任务 | 任务编号、流程名称、提交时间 |
+
+## 定位策略执行台账
+
+在「元素定位」之外新增定位台账（`/locator-ledger`），解决定位策略发布后
+没有批量执行与回退证据的问题：
+
+- `POST /api/locator-ledger/build` 读取已启用定位规则和新到达的运行时会话
+  记录，解析主/回退执行结果，生成版本化的定位策略执行记录数据集；
+  重复导入只认第一条记录。
+- `POST /api/locator-ledger/execute` 运行时会话按版本数据集消费台账记录，
+  按最终选择器批量执行并为每个元素生成回执，联动更新待办。
+- 每次元素解析只保留一个最终定位：主选择器与回退选择器都能命中时，
+  保留主结果为最终定位，回退另附为候选；失败记录保存首次错误、
+  最终采用策略和完整回退路径。
+- `POST /api/locator-ledger/retest` 异常元素重新测试并生成新回执，
+  旧回执自动失效，任一时刻每条记录只有一条有效回执。
+- `GET /api/locator-ledger/reconcile` 核对业务记录与结果明细的
+  残留、丢失、错位和重复。
 
 ## 约定
 

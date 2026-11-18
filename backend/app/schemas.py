@@ -29,3 +29,18 @@ class EntryPayload(BaseModel):
 class ActionPayload(BaseModel):
     action: str
     remark: str | None = None
+
+
+class LedgerBuildPayload(BaseModel):
+    """定位策略执行台账：构建数据集请求。"""
+    rule_ids: list[int] | None = None
+
+
+class LedgerExecutePayload(BaseModel):
+    """定位策略执行台账：按版本数据集批量执行请求。"""
+    version: str | None = None
+
+
+class LedgerRetestPayload(BaseModel):
+    """定位策略执行台账：异常元素重测请求。"""
+    record_ids: list[str] = Field(default_factory=list)
